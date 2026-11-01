@@ -1,0 +1,85 @@
+name: Shipnoted release notes
+description: Draft (or publish) release notes from the pull requests merged since the last tag, and close the loop with the people who asked.
+author: Shipnoted
+branding:
+  icon: send
+  color: orange
+
+inputs:
+  api-key:
+    description: A Shipnoted API key with the "releases:write" scope. Store it as a repository secret.
+    required: true
+  project:
+    description: Your project's slug.
+    required: true
+  tag:
+    description: The tag being released. Defaults to the tag that triggered the workflow. It becomes the release's version.
+    required: false
+    default: ""
+  previous-tag:
+    description: Where the notes start. Defaults to the tag before this one.
+    required: false
+    default: ""
+  publish:
+    description: Publish at once ("true") instead of leaving a draft for you to review. Linked requests ship and their voters are emailed.
+    required: false
+    default: "false"
+  email:
+    description: When publishing, also email confirmed subscribers ("true").
+    required: false
+    default: "false"
+  title:
+    description: A title for the release. Defaults to one written from the changes.
+    required: false
+    default: ""
+  url:
+    description: Where Shipnoted is hosted. Only change this for a custom domain.
+    required: false
+    default: https://shipnoted.com
+  cli-version:
+    description: Which version of the shipnoted command line to run.
+    required: false
+    default: latest
+
+outputs:
+  release-id:
+    description: The id of the draft or published release. Empty when there were no changes.
+    value: ${{ steps.draft.outputs.release-id }}
+  url:
+    description: The public address, when published.
+    value: ${{ steps.draft.outputs.url }}
+  source:
+    description: Who wrote the notes, "claude" or "builtin".
+    value: ${{ steps.draft.outputs.source }}
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch the full history and tags
+      shell: bash
+      run: |
+        # A shallow checkout cannot see the previous tag, so the notes would cover every commit. Fix that here instead of asking you to.
+        if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then git fetch --quiet --unshallow --tags --force; else git fetch --quiet --tags --force; fi
+    - name: Draft the release
+      id: draft
+      shell: bash
+      env:
+        SHIPNOTED_API_KEY: ${{ inputs.api-key }}
+        SHIPNOTED_PROJECT: ${{ inputs.project }}
+        SHIPNOTED_URL: ${{ inputs.url }}
+        SN_TAG: ${{ inputs.tag }}
+        SN_FROM: ${{ inputs.previous-tag }}
+        SN_PUBLISH: ${{ inputs.publish }}
+        SN_EMAIL: ${{ inputs.email }}
+        SN_TITLE: ${{ inputs.title }}
+        SN_CLI: ${{ inputs.cli-version }}
+      run: |
+        # Inputs reach the shell as environment variables, never pasted into the script, so a tag or title cannot inject commands.
+        args=(release draft)
+        tag="${SN_TAG:-${GITHUB_REF_NAME}}"
+        [ -n "$tag" ] && args+=(--tag "$tag")
+        [ -n "$SN_FROM" ] && args+=(--from "$SN_FROM")
+        [ -n "$SN_TITLE" ] && args+=(--title "$SN_TITLE")
+        [ "$SN_PUBLISH" = "true" ] && args+=(--publish)
+        [ "$SN_EMAIL" = "true" ] && args+=(--email)
+        npx --yes "shipnoted@${SN_CLI}" "${args[@]}"
